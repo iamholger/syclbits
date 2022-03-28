@@ -28,15 +28,13 @@ void reduce_to_scalar(sycl::queue Q, T * input, T & output, const size_t N, F op
 template <class T, class F>
 void reduce_to_array(sycl::queue Q, const size_t N, size_t current_size, T * input, T * output, F operation)
 {
-    //size_t gathersize(0);
-    const auto   WGMAX =  Q.get_device().get_info<info::device::max_work_group_size>();
+    static const auto WGMAX =  Q.get_device().get_info<info::device::max_work_group_size>();
     // Keep reducing until the gathersize is <= WGMAX (device specific)
     while ( (current_size/N) > WGMAX )
     {
 #ifdef DEBUG
         std::cout << "The next gather size  " << current_size/N << " is > WGMAX ---> need to iterate\n";
 #endif
-        bool done(false);
         size_t gathersize(WGMAX+1);
         while ( not ( (gathersize < WGMAX) and ( (current_size/gathersize)%N == 0) ) )
         //while (not ( (gathersize < WGMAX)  and (current_size%gathersize == 0) and ( (current_size/gathersize)%N == 0)))
