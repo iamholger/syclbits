@@ -24,46 +24,42 @@ void reduce_to_scalar(sycl::queue Q, T * input, T & output, const size_t N, F op
     output = BUF.get_host_access()[0];
 }
 
-// Main reducer --- keep in mind that this one changes input
+
+
+
+// Main reducer --- keep in mind that this one changes input, also Nhave is modified!
 template <class T, class F>
-void reduce_to_array(sycl::queue Q, const size_t N, size_t current_size, T * input, T * output, F operation)
+void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input, T * output, F operation)
 {
     static const auto WGMAX =  Q.get_device().get_info<info::device::max_work_group_size>();
-    // Keep reducing until the gathersize is <= WGMAX (device specific)
-    while ( (current_size/N) > WGMAX )
+    while ( (Nhave/Nwant) > WGMAX ) // Keep reducing until the gathersize is <= WGMAX (device specific)
     {
 #ifdef DEBUG
-        std::cout << "The next gather size  " << current_size/N << " is > WGMAX ---> need to iterate\n";
+        std::cout << Nhave << " The next gather size  " << Nhave/Nwant << " is > WGMAX ---> need to iterate\n";
 #endif
-        size_t gathersize(WGMAX+1);
-        while ( not ( (gathersize < WGMAX) and ( (current_size/gathersize)%N == 0) ) )
-        //while (not ( (gathersize < WGMAX)  and (current_size%gathersize == 0) and ( (current_size/gathersize)%N == 0)))
-        {
-            gathersize--;
-        }
+        size_t gathersize(WGMAX);
+        while ( not ( (Nhave/gathersize)%Nwant == 0 and (Nhave%gathersize==0) ) )  gathersize--;
 #ifdef DEBUG
-        std::cout << "reduce " << current_size << " " << gathersize << "\n";
+        std::cout << "reduce " << Nhave << " " << gathersize << " " << Nhave%gathersize << "\n";
 #endif
-        
         Q.submit([&](handler & cgh)
         {
-          cgh.parallel_for(nd_range<1>{{current_size}, {gathersize}}, [=](nd_item<1> it) 
+          cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
           {
-            auto wg =  it.get_group();
-            input[it.get_group_linear_id()] = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
+            input[it.get_group_linear_id()] = reduce_over_group(it.get_group(), input[it.get_global_linear_id()], operation);
           });
         }).wait();
-        current_size /= gathersize;
+        Nhave /= gathersize;
     }
 #ifdef DEBUG
-    std::cout << "The next gather size " << current_size/N << " is <= WGMAX (" << WGMAX << ") so final reduction\n";
+    std::cout << "The next gather size " << Nhave/Nwant << " is <= WGMAX (" << WGMAX << ") so final reduction\n";
 #endif
 
-    size_t gathersize = current_size/N;
+    size_t gathersize = Nhave/Nwant;
     // Note how in the final reduction we can reduce directly into the output buffer
     Q.submit([&](handler & cgh)
     {
-      cgh.parallel_for(nd_range<1>{{current_size}, {gathersize}}, [=](nd_item<1> it) 
+      cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
       {
         auto wg =  it.get_group();
         output[it.get_group_linear_id()] = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
@@ -71,7 +67,63 @@ void reduce_to_array(sycl::queue Q, const size_t N, size_t current_size, T * inp
     }).wait();
 }
 
+// Main reducer --- uses explicit reduction buffer i.e. input is unchanged, also Nhave is modified!
+template <class T, class F>
+void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input, T * output, T * redbuf, F operation)
+{
+    static const auto WGMAX =  Q.get_device().get_info<info::device::max_work_group_size>();
+    int round(0);
+    while ( (Nhave/Nwant) > WGMAX ) // Keep reducing until the gathersize is <= WGMAX (device specific)
+    {
+#ifdef DEBUG
+        std::cout << "The next gather size  " << Nhave/Nwant << " is > WGMAX ---> need to iterate\n";
+#endif
+        size_t gathersize(WGMAX);
+        while ( not ( (Nhave/gathersize)%Nwant == 0 and (Nhave%gathersize==0)) )  gathersize--;
+#ifdef DEBUG
+        std::cout << "reduce " << Nhave << " " << gathersize << "\n";
+#endif
+        if (round==0)
+        {
+          Q.submit([&](handler & cgh)
+          {
+            cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
+            {
+              redbuf[it.get_group_linear_id()] = reduce_over_group(it.get_group(), input[it.get_global_linear_id()], operation);
+            });
+          }).wait();
+        }
+        else {
+          Q.submit([&](handler & cgh)
+          {
+            cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
+            {
+              redbuf[it.get_group_linear_id()] = reduce_over_group(it.get_group(), redbuf[it.get_global_linear_id()], operation);
+            });
+          }).wait();
+        }
+        Nhave /= gathersize;
+        round++;
+    }
+#ifdef DEBUG
+    std::cout << "The next gather size " << Nhave/Nwant << " is <= WGMAX (" << WGMAX << ") so final reduction\n";
+#endif
 
+    size_t gathersize = Nhave/Nwant;
+    // Note how in the final reduction we can reduce directly into the output buffer
+    Q.submit([&](handler & cgh)
+    {
+      cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
+      {
+        auto wg =  it.get_group();
+        if (round==0) output[it.get_group_linear_id()] = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
+        else          output[it.get_group_linear_id()] = reduce_over_group(wg, redbuf[it.get_global_linear_id()], operation);
+      });
+    }).wait();
+}
+
+// Deprecated
+//
 // The most flexible one using nd_range<2>
 // Initially, we have an array of length N*n
 // We reduce to an array of length N where the reduction happens over the n sub elements
@@ -82,9 +134,9 @@ void reduce_to_array(sycl::queue Q, const size_t N, const size_t n, const size_t
 {
 
     const size_t nitems = N*n;
-    // Device allocated reduction buffer
     size_t reduced_size(nitems/wgsize);
    
+    std::cout<< reduced_size << " red_size\n";
     // Reducing nitems -> nitems/(wgsize) 
     Q.submit([&](handler & cgh) {
           cgh.parallel_for(nd_range<2>{{N, n}, {1, wgsize}},
@@ -94,9 +146,12 @@ void reduce_to_array(sycl::queue Q, const size_t N, const size_t n, const size_t
           });
     }).wait();
 
-    reduce_to_array<double>(Q, N, reduced_size, input, output, operation);
+    for (int i=0;i<reduced_size;i++) std::cout << "See " << input[i] << "\n";
+
+    reduce_to_array<T>(Q, N, reduced_size, input, output, operation);
 }
 
+// Deprecated
 // Uses a reduction buffer, i.e. won't change input
 template <class T, class F>
 void reduce_to_array(sycl::queue Q, const size_t N, const size_t n, const size_t wgsize, T * input, T * output, T* redbuf, F operation)
