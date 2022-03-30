@@ -10,7 +10,7 @@ Input             |  Output
 
 
 ## Dependencies
-Requires CImg.h (https://cimg.eu) and libpng.
+Requires CImg.h (https://cimg.eu) and libpng (http://www.libpng.org/pub/png/libpng.html).
 
 ##  Build
 ```
