@@ -56,6 +56,20 @@ void write_grayscale_png(const char* fname, T * buffer, int & width, int & heigh
 
 int main(int argc, char * argv[])
 {
+#ifdef MEASURE
+  if (argc !=4)
+  {
+    printf("Need exactly tree CL arguments: input output iterations\n");
+    exit(1);
+  }
+#else
+  if (argc !=3)
+  {
+    printf("Need exactly two CL arguments: input output\n");
+    exit(1);
+  }
+#endif
+  
   assert(strcmp(argv[1], argv[2]) !=0); // Make sure we don't overwrite the input file
 
   int width(0), height(0);
@@ -70,7 +84,7 @@ int main(int argc, char * argv[])
     for (int i=0;i<std::atoi(argv[3]);i++) 
     gray_array<int>(mQ, input, output, width, height);
     auto end = std::chrono::steady_clock::now();
-    std::cout << argv[3] << " iterations took " <<std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms on device" << mQ.get_device().get_info<info::device::name>() << "\n";
+    std::cout << argv[3] << " iterations took " <<std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms on device " << mQ.get_device().get_info<info::device::name>() << "\n";
 #endif
 
   free(input, mQ);
