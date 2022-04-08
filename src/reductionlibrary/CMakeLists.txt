@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 #set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
 
-SET(SYCL_FLAGS "-fsycl -fsycl-targets=nvptx64-nvidia-cuda--sm_75 -Wno-error -g3 -DDEBUG")
+SET(SYCL_FLAGS "-fsycl -fsycl-targets=nvptx64-nvidia-cuda--sm_35,spir64,spir64_x86_64 -Wno-error -g3 -DDEBUG")
 SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${SYCL_FLAGS}")
 
 #message(STATUS "Before: ${CMAKE_CXX_FLAGS}")
