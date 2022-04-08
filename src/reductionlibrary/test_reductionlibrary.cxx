@@ -28,9 +28,7 @@ TEST(ReductionLibraryTest, BasicAssertions)
 
     free(input, mQ);
 }
-
-
-TEST(ReductionLibraryTest, Check3D)
+TEST(ReductionLibraryTest, Check3Dpure)
 {
   std::vector<size_t> nvalues = {2,3,4,5,8,9,12,30,31};
   const size_t N(201);
@@ -38,24 +36,73 @@ TEST(ReductionLibraryTest, Check3D)
   for (auto n : nvalues)
   {
     size_t nitems(3*n*n*n*N);
-    auto input = malloc_shared<double>(nitems,mQ);
-    for (int i =0;i<nitems;i++) input[i] = i;
-    
     std::vector<double> test(nitems);
     std::iota(test.begin(), test.end(), 0);
+    
+    auto input = malloc_shared<double>(nitems,mQ);
+    mQ.memcpy(input, test.data(), sizeof(double)*nitems).wait();
+
+     //NOTE: this is observed to not be correct on CPU, possible race condition somewhere
+    reduce_to_array<double>(mQ, N, nitems, input, maximum<>());
+    for (int i=0;i<N;i++)
+    {
+      EXPECT_EQ(input[i], *std::max_element(test.begin() + 3*n*n*n*i, test.begin() + 3*n*n*n*(i+1)));
+    }
+    
+    free(input,   mQ);
+  }
+}
+
+
+TEST(ReductionLibraryTest, Check3DwithoutBuf)
+{
+  std::vector<size_t> nvalues = {2,3,4,5,8,9,12,30,31};
+  const size_t N(201);
+
+  for (auto n : nvalues)
+  {
+    size_t nitems(3*n*n*n*N);
+    std::vector<double> test(nitems);
+    std::iota(test.begin(), test.end(), 0);
+    
+    auto input = malloc_shared<double>(nitems,mQ);
+    mQ.memcpy(input, test.data(), sizeof(double)*nitems).wait();
+
+    auto output = malloc_shared<double>(N,mQ);
+    for (int i =0;i<N;i++) output[i] = -1;
+
+     //NOTE: this is observed to not be correct on CPU, possible race condition somewhere
+    reduce_to_array<double>(mQ, N, nitems, input, output, maximum<>());
+    for (int i=0;i<N;i++)
+    {
+      EXPECT_EQ(output[i], *std::max_element(test.begin() + 3*n*n*n*i, test.begin() + 3*n*n*n*(i+1)));
+    }
+    
+    free(input,   mQ);
+    free(output,  mQ);
+  }
+}
+
+TEST(ReductionLibraryTest, Check3DwithBuf)
+{
+  std::vector<size_t> nvalues = {2,3,4,5,8,9,12,30,31};
+  const size_t N(201);
+
+  for (auto n : nvalues)
+  {
+    size_t nitems(3*n*n*n*N);
+    std::vector<double> test(nitems);
+    std::iota(test.begin(), test.end(), 0);
+    
+    auto input = malloc_device<double>(nitems,mQ);
+    mQ.memcpy(input, test.data(), sizeof(double)*nitems).wait();
 
     auto output = malloc_shared<double>(N,mQ);
     for (int i =0;i<N;i++) output[i] = -1;
 
     auto redbuf = malloc_device<double>(nitems, mQ); 
-    
+   
     reduce_to_array<double>(mQ, N, nitems, input, output, redbuf, maximum<>());
-    for (int i=0;i<N;i++)
-    {
-      EXPECT_EQ(output[i], *std::max_element(test.begin() + 3*n*n*n*i, test.begin() + 3*n*n*n*(i+1)));
-    }
-
-    reduce_to_array<double>(mQ, N, nitems, input, output, maximum<>());
     for (int i=0;i<N;i++)
     {
       EXPECT_EQ(output[i], *std::max_element(test.begin() + 3*n*n*n*i, test.begin() + 3*n*n*n*(i+1)));

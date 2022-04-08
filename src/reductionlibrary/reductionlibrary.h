@@ -24,6 +24,44 @@ void reduce_to_scalar(sycl::queue Q, T * input, T & output, const size_t N, F op
     output = BUF.get_host_access()[0];
 }
 
+template <class T, class F>
+void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input, F operation)
+{
+    static const auto WGMAX = Q.get_device().get_info<info::device::max_work_group_size>();
+    while ( (Nhave/Nwant) > WGMAX ) // Keep reducing until the gathersize is <= WGMAX (device specific)
+    {
+#ifdef DEBUG
+        std::cout << Nhave << " The next gather size  " << Nhave/Nwant << " is > WGMAX ---> need to iterate\n";
+#endif
+        size_t gathersize(WGMAX);
+        while ( not ( (Nhave/gathersize)%Nwant == 0 and (Nhave%gathersize==0) ) )  gathersize--;
+#ifdef DEBUG
+        std::cout << "reduce " << Nhave << " " << gathersize << " " << Nhave%gathersize << "\n";
+#endif
+        Q.submit([&](handler & cgh)
+        {
+          cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it)
+          {
+            input[it.get_group(0)] = reduce_over_group(it.get_group(), input[it.get_global_id(0)], operation);
+          });
+        }).wait();
+        Nhave /= gathersize;
+    }
+
+    const size_t gathersize = Nhave/Nwant;
+#ifdef DEBUG
+    std::cout << "The final gather size " << gathersize << " is <= WGMAX (" << WGMAX << ") for the remaining " << Nhave << " items\n";
+#endif
+
+    const size_t Nhavefinal(Nhave);
+    Q.submit([&](handler & cgh)
+    {
+      cgh.parallel_for(nd_range<1>{{Nhavefinal}, {gathersize}}, [=](nd_item<1> it)
+      {
+        input[it.get_group_linear_id()] = reduce_over_group(it.get_group(), input[it.get_global_id(0)], operation);
+      });
+    }).wait();
+}
 
 
 
@@ -46,7 +84,9 @@ void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input,
         {
           cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
           {
-            input[it.get_group_linear_id()] = reduce_over_group(it.get_group(), input[it.get_global_linear_id()], operation);
+            //input[it.get_group_linear_id()] = reduce_over_group(it.get_group(), input[it.get_global_linear_id()], operation);
+            auto temp = reduce_over_group(it.get_group(), input[it.get_global_linear_id()], operation);
+            input[it.get_group_linear_id()] = temp;
           });
         }).wait();
         Nhave /= gathersize;
@@ -55,6 +95,8 @@ void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input,
     std::cout << "The next gather size " << Nhave/Nwant << " is <= WGMAX (" << WGMAX << ") so final reduction\n";
 #endif
 
+    std::cout << "oha: " << input[0] << " and " << output[0] << " now: " << Nhave << "\n";
+
     size_t gathersize = Nhave/Nwant;
     // Note how in the final reduction we can reduce directly into the output buffer
     Q.submit([&](handler & cgh)
@@ -62,7 +104,9 @@ void reduce_to_array(sycl::queue Q, const size_t Nwant, size_t Nhave, T * input,
       cgh.parallel_for(nd_range<1>{{Nhave}, {gathersize}}, [=](nd_item<1> it) 
       {
         auto wg =  it.get_group();
-        output[it.get_group_linear_id()] = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
+        //output[it.get_group_linear_id()] = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
+        auto temp = reduce_over_group(wg, input[it.get_global_linear_id()], operation);
+        output[it.get_group_linear_id()] = temp;
       });
     }).wait();
 }
